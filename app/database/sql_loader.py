@@ -23,6 +23,16 @@ def ejecutar_sql(conexion, archivo, parametros=None):
     cursor = conexion.cursor(dictionary=True)
     filas = []
     try:
+        print("="*60)
+        print("SQL que se ejecutara")
+        print(consulta)
+
+        print()
+
+        print("PARAMETROS")
+        print(parametros)
+        print("="*60)
+
         cursor.execute(consulta, parametros)
         if cursor.with_rows:
             filas.extend(cursor.fetchall())
@@ -34,7 +44,12 @@ def ejecutar_sql(conexion, archivo, parametros=None):
                     filas.extend(res.fetchall())
 
         conexion.commit()
+
+        print("COMMIT REALIZADO")
+
     finally:
         cursor.close()
-
+        print("FILAS DEVUELTAS")
+        print(filas)
+        
     return filas

@@ -634,75 +634,187 @@ BEGIN
     END;
 END$$
 
-
+-- modifided 
 CREATE PROCEDURE p_realizar_transaccion(
     IN p_portfolio_id INT,
-    IN p_ticker        VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
-    IN p_type          ENUM('BUY','SELL'),
-    IN p_shares        DECIMAL(18,8),
-    IN p_price         DECIMAL(18,6),
-    IN p_date          DATETIME
+    IN p_ticker VARCHAR(20),
+    IN p_type ENUM('BUY','SELL'),
+    IN p_shares DECIMAL(18,8),
+    IN p_price DECIMAL(18,6),
+    IN p_date DATETIME
 )
 BEGIN
-    DECLARE v_cash_balance   DECIMAL(20,2);
-    DECLARE v_new_cash       DECIMAL(20,2);
-    DECLARE v_id_activo      INT;
-    DECLARE v_available_shares DECIMAL(18,8);
+
+    DECLARE v_cash DECIMAL(20,2);
+    DECLARE v_id_activo INT;
+
+    DECLARE v_posicion DECIMAL(18,8);
+    DECLARE v_costo DECIMAL(18,6);
+
     START TRANSACTION;
-    -- Busca el id del activo una sola vez, se utilizara mas adelante.
-    SELECT id_activo INTO v_id_activo
+
+    -- Buscar el activo
+
+    SELECT id_activo
+    INTO v_id_activo
     FROM activo
-    WHERE ticker = p_ticker
-    FOR UPDATE;
+    WHERE ticker = CONVERT(p_ticker USING utf8mb4) COLLATE utf8mb4_0900_ai_ci
+    LIMIT 1;
+
     IF v_id_activo IS NULL THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ticker not found in activo table.';
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT='Ticker no existe.';
     END IF;
-    -- Bloquea la fila del portafolio para actualizar el efectivo de forma segura.
-    SELECT cash INTO v_cash_balance
+
+    -- Obtener cash
+
+    SELECT cash
+    INTO v_cash
     FROM portafolio
-    WHERE id_portafolio = p_portfolio_id
+    WHERE id_portafolio=p_portfolio_id
     FOR UPDATE;
-    IF p_type = 'BUY' THEN
-        SET v_new_cash = v_cash_balance - (p_shares * p_price);
-        IF v_new_cash < 0 THEN
-            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Insufficient cash to perform BUY.';
+
+    IF p_type='BUY' THEN
+
+        IF v_cash < p_shares*p_price THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT='Fondos insuficientes.';
         END IF;
-        UPDATE portafolio SET cash = v_new_cash
-        WHERE id_portafolio = p_portfolio_id;
-    ELSEIF p_type = 'SELL' THEN
-        SELECT posicion_actual INTO v_available_shares
+
+        UPDATE portafolio
+        SET cash=cash-(p_shares*p_price)
+        WHERE id_portafolio=p_portfolio_id;
+
+    ELSE
+
+        SELECT posicion_actual,
+               costo_base
+        INTO v_posicion,
+             v_costo
         FROM posicion
-        WHERE id_portafolio = p_portfolio_id AND id_activo = v_id_activo
+        WHERE id_portafolio=p_portfolio_id
+        AND id_activo=v_id_activo
         FOR UPDATE;
-        IF v_available_shares IS NULL OR v_available_shares < p_shares THEN
-            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Insufficient shares to perform SELL.';
+
+        IF v_posicion IS NULL OR v_posicion<p_shares THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT='Insufficient shares to perform SELL.';
         END IF;
-        SET v_new_cash = v_cash_balance + (p_shares * p_price);
-        UPDATE portafolio SET cash = v_new_cash
-        WHERE id_portafolio = p_portfolio_id;
+
+        UPDATE portafolio
+        SET cash=cash+(p_shares*p_price)
+        WHERE id_portafolio=p_portfolio_id;
+
     END IF;
-    -- Inserta el registro de transacción inmutable.
-    INSERT INTO movimiento (
+
+    -- Registrar movimiento
+
+    INSERT INTO movimiento
+    (
         id_portafolio,
         id_activo,
         tipo_mov,
         cantidad,
         precio_por_accion,
-        fee,
-        notas,
         fecha_transaccion
-    ) VALUES (
+    )
+    VALUES
+    (
         p_portfolio_id,
         v_id_activo,
         p_type,
         p_shares,
         p_price,
-        0.0,
-        NULL,
         p_date
     );
+
+    -- BUY
+
+    IF p_type='BUY' THEN
+
+        IF EXISTS(
+            SELECT 1
+            FROM posicion
+            WHERE id_portafolio=p_portfolio_id
+            AND id_activo=v_id_activo
+        ) THEN
+
+            UPDATE posicion
+            SET
+
+            costo_base=
+            (
+                (costo_base*posicion_actual)
+                +(p_price*p_shares)
+            )
+            /(posicion_actual+p_shares),
+
+            posicion_actual=posicion_actual+p_shares
+
+            WHERE id_portafolio=p_portfolio_id
+            AND id_activo=v_id_activo;
+
+        ELSE
+
+            INSERT INTO posicion
+            (
+                id_portafolio,
+                id_activo,
+                posicion_actual,
+                costo_base
+            )
+            VALUES
+            (
+                p_portfolio_id,
+                v_id_activo,
+                p_shares,
+                p_price
+            );
+
+        END IF;
+
+        INSERT IGNORE INTO activos_portafolio
+        VALUES
+        (
+            v_id_activo,
+            p_portfolio_id
+        );
+
+    END IF;
+
+    -- SELL
+
+    IF p_type='SELL' THEN
+
+        UPDATE posicion
+        SET posicion_actual=posicion_actual-p_shares
+        WHERE id_portafolio=p_portfolio_id
+        AND id_activo=v_id_activo;
+
+        DELETE
+        FROM posicion
+        WHERE id_portafolio=p_portfolio_id
+        AND id_activo=v_id_activo
+        AND posicion_actual<=0;
+
+        DELETE
+        FROM activos_portafolio
+        WHERE id_portafolio=p_portfolio_id
+        AND id_activo=v_id_activo
+        AND NOT EXISTS
+        (
+            SELECT 1
+            FROM posicion
+            WHERE id_portafolio=p_portfolio_id
+            AND id_activo=v_id_activo
+        );
+
+    END IF;
+
     COMMIT;
+
 END$$
+
 
 
 
