@@ -11,6 +11,11 @@ import logging
 import os
 import sys
 import time
+import getpass
+from app.services.auth_service import AuthService
+from app.repositories.cliente_repository import ClienteRepository
+from app.services.logger_service import sesion
+from menu import mostrar_menu
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -47,56 +52,109 @@ def get_tickers():
 
 
 def run():
-    print("========================================================")
-    print("   INVESTOR SCOUT — ETL: Yahoo Finance -> MySQL")
-    print("========================================================")
+    while True:
+        print(f"")
+        print(f"")
+        print(f"")
+        print(f"==============================================")
+        print(f"                INVESTOR SCOUT                ")
+        print(f"==============================================")
+        print(f"")
+        print(f"1. Registrate si no tienes una cuenta todavia")
+        print(f"")
+        print(f"2. Inicia sesion si ya tienes una cuenta")
+        print(f"")
+        print(f"3. Salir")
+        print(f"==============================================")
+        print(f"")
 
-    # 1. Asegura que las tablas existan (idempotente, no borra datos)
-    if not initialize_database():
-        print("[ABORTADO] No se pudo preparar la base de datos.")
-        sys.exit(1)
+        opcion = input(f"Escribe tu accion: ")
 
-    # 2. Tickers a sincronizar
-    tickers = get_tickers()
-    if not tickers:
-        print(f"[ABORTADO] No hay tickers para sincronizar. "
-              f"Agrégalos en {TICKERS_FILE} o pásalos como argumento: "
-              f"python main.py AAPL MSFT")
-        sys.exit(1)
+        while opcion not in ["1", "2", "3"]:
+            print(f"")
+            opcion = input(f"Por favor, escribe una opcion disponible: ")
 
-    print(f"\nTickers a sincronizar ({len(tickers)}): {', '.join(tickers)}")
+        if opcion == "3":
+            print("¡Hasta pronto!")
+            sys.exit(0)
+            
+        if opcion == "1":
+            print(f"")
+            print(f"==============================================")
+            print(f"           REGISTRO EN INVESTOR SCOUT         ")
+            print(f"==============================================")
+            print(f"")
+            print(f"Estamos felices de que nos hayas elegido")
+            print(f"")
+            
+            nombre = input(f"Por favor, digita tu nombre: ").strip()
+            while not nombre:
+                nombre = input("Nombre invalido, intenta nuevamente: ").strip()
 
-    provider = YahooFinanceProvider()
-    stock_cache = StockCache()
-    sync_service = SyncService(provider=provider, stock_cache=stock_cache)
+            apellido = input(f"Digita tu apellido: ").strip()
+            while not apellido:
+                apellido = input("Apellido invalido, intenta nuevamente: ").strip()
 
-    exitosos = []
-    fallidos = []
-    start = time.time()
+            email = input("Digita tu dirección de correo: ").strip().lower()
+            while "@" not in email or "." not in email.split("@")[-1]:
+                email = input("Correo inválido, intenta nuevamente: ").strip().lower()
 
-    for ticker in tickers:
-        print(f"\n-> Procesando {ticker}...")
-        try:
-            ok = sync_service.sync_initial(ticker)
-            if ok:
-                print(f"   [OK] {ticker} sincronizado y guardado en MySQL.")
-                exitosos.append(ticker)
+            telefono = input(f"Digita tu numero de telefono: ").strip()
+            telefono = telefono if telefono else None
+            
+            print(f"")
+            contrasena = getpass.getpass(prompt=f"Digita tu contraseña: ")
+            while not contrasena:
+                contrasena = input(f"Contraseña invalida, intenta nuevamente: ")
+                
+            confirmacion = getpass.getpass(prompt=f"Confirma tu contraseña: ")
+            while not confirmacion:
+                confirmacion = input(f"Contraseña invalida, intenta nuevamente: ")
+                
+            while contrasena != confirmacion:
+                print(f"Las contraseñas no coinciden.")
+                print(f"")
+                contrasena = getpass.getpass(prompt=f"Digita tu contraseña: ")
+                confirmacion = getpass.getpass(prompt=f"Confirma tu contraseña: ")
+
+            auth_service = AuthService() 
+            resultado = auth_service.registrar(nombre=nombre, apellido=apellido, email=email, telefono=telefono, contrasena=contrasena)
+
+            if resultado.exito:
+                print(f"\nRegistro exitoso. Bienvenido " + nombre)
             else:
-                print(f"   [FALLO] {ticker} no se pudo sincronizar (ver log).")
-                fallidos.append(ticker)
-        except Exception as e:
-            print(f"   [ERROR] Excepción al sincronizar {ticker}: {e}")
-            fallidos.append(ticker)
+                print(f"\nError al registrar: {resultado.mensaje}")
 
-    elapsed = time.time() - start
-    print("\n========================================================")
-    print("   RESUMEN")
-    print("========================================================")
-    print(f"Exitosos ({len(exitosos)}): {', '.join(exitosos) if exitosos else '-'}")
-    print(f"Fallidos ({len(fallidos)}): {', '.join(fallidos) if fallidos else '-'}")
-    print(f"Tiempo total: {elapsed:.1f}s")
+        if opcion == "2":
+            print(f"")
+            print(f"==============================================")
+            print(f"       INICIO DE SESION EN INVESTOR SCOUT     ")
+            print(f"==============================================")
+            print(f"")
+            print(f"Estamos felices de tenerte devuelta")
+            print(f"")
+            
+            email = input("Digita tu dirección de correo: ").strip().lower()
+            while "@" not in email or "." not in email.split("@")[-1]:
+                email = input("Por favor, digita una direccion de correo valida: ").strip().lower()
+                
+            print(f"")
+            contrasena = getpass.getpass(prompt=f"Digita tu contraseña: ")
+            while not contrasena:
+                contrasena = getpass.getpass(prompt=f"Por favor, digita una contraseña: ")
 
-    sys.exit(0 if not fallidos else 2)
+            auth_service = AuthService()
+            resultado = auth_service.iniciar_sesion(email=email, contrasena=contrasena)
+
+            if resultado.exito:
+                # resultado.cliente contiene todos los datos del usuario que acaba de entrar
+                sesion.iniciar(resultado.cliente)
+                print(f"\nInicio de sesion correcto. Bienvenido de vuelta, {resultado.cliente.nombre}!")
+
+                mostrar_menu(resultado.cliente)
+
+            else:
+                print(f"\nError: {resultado.mensaje}")
 
 
 if __name__ == "__main__":

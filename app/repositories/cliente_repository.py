@@ -1,45 +1,35 @@
 from typing import List, Optional
 from app.repositories.base_repository import BaseRepository
-from app.models.user import User
+from app.models.domain import Cliente
 
 class ClienteRepository(BaseRepository):
     """
     Repository for the 'cliente' table in MySQL.
     """
-    def save(self, user: User) -> int:
+    
+
+    def save(self, cliente: Cliente) -> int:
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
             query = """
                 INSERT INTO cliente (nombre, apellido, email, password_hash, telefono)
                 VALUES (%s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    nombre = VALUES(nombre),
-                    apellido = VALUES(apellido),
-                    password_hash = VALUES(password_hash),
-                    telefono = VALUES(telefono)
             """
             cursor.execute(query, (
-                user.first_name,
-                user.last_name,
-                user.email,
-                user.password_hash,
-                user.telephone
+                cliente.nombre,
+                cliente.apellido,
+                cliente.email,
+                cliente.password_hash,
+                cliente.telefono
             ))
             conn.commit()
-            
-            # Fetch the generated or existing id
-            cursor.execute("SELECT id_cliente FROM cliente WHERE email = %s", (user.email,))
-            res = cursor.fetchone()
-            if res:
-                user.user_id = res[0]
-                return res[0]
-            raise ValueError(f"Could not retrieve id_cliente for email {user.email}")
+            return cursor.lastrowid
         finally:
             cursor.close()
             self.close_connection(conn)
 
-    def get_by_id(self, id_cliente: int) -> Optional[User]:
+    def get_by_id(self, id_cliente: int) -> Optional[Cliente]:
         conn = self.get_connection()
         cursor = conn.cursor(dictionary=True)
         try:
@@ -47,20 +37,20 @@ class ClienteRepository(BaseRepository):
             cursor.execute(query, (id_cliente,))
             row = cursor.fetchone()
             if row:
-                return User(
-                    user_id=row["id_cliente"],
-                    first_name=row["nombre"],
-                    last_name=row["apellido"],
+                return Cliente(
+                    id_cliente=row["id_cliente"],
+                    nombre=row["nombre"],
+                    apellido=row["apellido"],
                     email=row["email"],
                     password_hash=row["password_hash"],
-                    telephone=row["telefono"]
+                    telefono=row["telefono"]
                 )
             return None
         finally:
             cursor.close()
             self.close_connection(conn)
 
-    def get_by_email(self, email: str) -> Optional[User]:
+    def get_by_email(self, email: str) -> Optional[Cliente]:
         conn = self.get_connection()
         cursor = conn.cursor(dictionary=True)
         try:
@@ -68,20 +58,20 @@ class ClienteRepository(BaseRepository):
             cursor.execute(query, (email,))
             row = cursor.fetchone()
             if row:
-                return User(
-                    user_id=row["id_cliente"],
-                    first_name=row["nombre"],
-                    last_name=row["apellido"],
+                return Cliente(
+                    id_cliente=row["id_cliente"],
+                    nombre=row["nombre"],
+                    apellido=row["apellido"],
                     email=row["email"],
                     password_hash=row["password_hash"],
-                    telephone=row["telefono"]
+                    telefono=row["telefono"]
                 )
             return None
         finally:
             cursor.close()
             self.close_connection(conn)
 
-    def get_all(self) -> List[User]:
+    def get_all(self) -> List[Cliente]:
         conn = self.get_connection()
         cursor = conn.cursor(dictionary=True)
         try:
@@ -89,13 +79,13 @@ class ClienteRepository(BaseRepository):
             cursor.execute(query)
             rows = cursor.fetchall()
             return [
-                User(
-                    user_id=row["id_cliente"],
-                    first_name=row["nombre"],
-                    last_name=row["apellido"],
+                Cliente(
+                    id_cliente=row["id_cliente"],
+                    nombre=row["nombre"],
+                    apellido=row["apellido"],
                     email=row["email"],
                     password_hash=row["password_hash"],
-                    telephone=row["telefono"]
+                    telefono=row["telefono"]
                 )
                 for row in rows
             ]

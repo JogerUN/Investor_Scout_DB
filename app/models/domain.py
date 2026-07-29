@@ -69,3 +69,17 @@ class MarketMetrics:
     beta: Optional[float] = None
     dividend_yield: Optional[float] = None
     id_metricas: Optional[int] = None
+
+@dataclass
+class Cliente:
+    """Corresponde a la tabla 'cliente'."""
+    nombre: str
+    apellido: str
+    email: str
+    password_hash: str
+    telefono: Optional[str] = None
+    id_cliente: Optional[int] = None
+    fecha_registro: Optional[date] = None
+
+    def __post_init__(self):
+        self.email = self.email.strip().lower()
