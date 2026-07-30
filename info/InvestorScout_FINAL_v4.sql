@@ -537,6 +537,39 @@ BEGIN
     WHERE p.id_portafolio = p_portfolio_id;
 END$$
 
+-- procedure for pnl start
+CREATE PROCEDURE p_recalcular_posiciones(
+    IN p_id_portafolio INT
+)
+BEGIN
+ 
+    UPDATE posicion p
+    JOIN (
+        SELECT mm1.id_activo, mm1.precio
+        FROM metricas_mercado mm1
+        INNER JOIN (
+            SELECT id_activo, MAX(fecha) AS max_fecha
+            FROM metricas_mercado
+            GROUP BY id_activo
+        ) mm2
+            ON mm1.id_activo = mm2.id_activo
+           AND mm1.fecha = mm2.max_fecha
+    ) precios ON precios.id_activo = p.id_activo
+ 
+    SET
+        p.valor_mercado      = p.posicion_actual * precios.precio,
+        p.unrealized_pnl     = (precios.precio - p.costo_base) * p.posicion_actual,
+        p.ultima_actualizacion = CURRENT_TIMESTAMP
+ 
+    WHERE p.id_portafolio = p_id_portafolio;
+ 
+    -- Tambien deja el snapshot y las metricas del portafolio al dia
+    -- con los valores recien recalculados.
+    CALL p_generar_snapshot(p_id_portafolio);
+    CALL p_actualizar_metricas_portafolio(p_id_portafolio);
+ 
+END$$
+-- procedure for pnl end
 
 CREATE PROCEDURE p_ajuste_cash(
     IN p_portfolio_id INT,

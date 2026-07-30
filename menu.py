@@ -407,6 +407,39 @@ def ver_performance(conexion):
     except Exception as e:
         print(f"Error al consultar resumen de performance: {e}")
 
+
+def refrescar_precios(conexion):
+    """
+    Vuelve a traer el precio de Yahoo Finance para cada activo del
+    portafolio (los bonos se ignoran, no tienen API) y luego recalcula
+    valor_mercado / unrealized_pnl de todas las posiciones. Util para
+    la demo: si acabas de comprar, el PnL sale en 0 porque compraste al
+    precio actual -- esto deja que el precio se actualice y el PnL
+    refleje el movimiento real del mercado.
+    """
+    print("\n--- Refresh Portfolio Prices ---")
+    id_portafolio = pedir_entero("id_portafolio: ")
+ 
+    try:
+        posiciones = ejecutar_sql(conexion, "portfolio/positions.sql", (id_portafolio,))
+    except Exception as e:
+        print(f"Error al leer las posiciones: {e}")
+        return
+ 
+    for fila in posiciones:
+        ticker = fila.get("ticker")
+        if not ticker:
+            continue
+        print(f"Sincronizando {ticker} con Yahoo Finance...")
+        asegurar_sincronizacion(ticker)
+ 
+    try:
+        ejecutar_sql(conexion, "portfolio/refresh_prices.sql", (id_portafolio,))
+        print("Posiciones recalculadas con el precio de mercado mas reciente.")
+    except Exception as e:
+        print(f"Error al recalcular posiciones: {e}")
+
+
 # -- llamado de consultar --
 import os
 
@@ -469,7 +502,6 @@ def ejecutar_consulta_menu(conexion, num_consulta, titulo):
         print(f"Error al ejecutar la consulta #{num_consulta}: {e}")
 
 
-
 # ======================================================================
 # MENÚS Y NAVEGACIÓN
 # ======================================================================
@@ -482,8 +514,9 @@ def menu_portfolio(conexion):
         print("1. Create Portfolio")
         print("2. View Positions")
         print("3. Portfolio Metrics")
-        print("4. Delete Portfolio")
-        print("5. Back")
+        print("4. Refresh Prices (recalculate PnL)")
+        print("5. Delete Portfolio")
+        print("6. Back")
         print("=========================")
 
         opcion = input("Escribe tu opcion: ").strip()
@@ -495,8 +528,10 @@ def menu_portfolio(conexion):
         elif opcion == "3":
             ver_metricas_portafolio(conexion)
         elif opcion == "4":
-            eliminar_portafolio(conexion)
+            refrescar_precios(conexion)
         elif opcion == "5":
+            eliminar_portafolio(conexion)            
+        elif opcion == "6":
             break
         else:
             print("Opcion invalida. Intenta nuevamente.")
