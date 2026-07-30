@@ -634,7 +634,308 @@ BEGIN
     END;
 END$$
 
--- modifided 
+-- ==================================================
+--                  modifided  
+-- ==================================================
+CREATE PROCEDURE p_actualizar_metricas_portafolio(
+    IN p_id_portafolio INT
+)
+BEGIN
+ 
+    DECLARE v_total DECIMAL(20,2);
+    DECLARE v_pnl DECIMAL(20,2);
+    DECLARE v_cash DECIMAL(20,2);
+    DECLARE v_invertido DECIMAL(20,2);
+    DECLARE v_retorno_pct DECIMAL(8,4);
+ 
+    SET v_total = fn_total_value(p_id_portafolio);
+    SET v_pnl = fn_unrealized_pnl(p_id_portafolio);
+ 
+    SELECT cash INTO v_cash
+    FROM portafolio
+    WHERE id_portafolio = p_id_portafolio;
+ 
+    SET v_invertido = v_total - IFNULL(v_cash, 0);
+ 
+    IF v_invertido > 0 THEN
+        SET v_retorno_pct = ROUND((v_pnl / v_invertido) * 100, 4);
+    ELSE
+        SET v_retorno_pct = 0;
+    END IF;
+ 
+    INSERT INTO metricas_portafolio
+    (
+        id_portafolio,
+        fecha_calculo,
+        retorno_total,
+        volatilidad,
+        sharpe,
+        max_drawdown,
+        beta,
+        alpha
+    )
+    VALUES
+    (
+        p_id_portafolio,
+        CURDATE(),
+        v_retorno_pct,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL
+    )
+ 
+    ON DUPLICATE KEY UPDATE
+ 
+        retorno_total = VALUES(retorno_total),
+        volatilidad   = VALUES(volatilidad),
+        sharpe        = VALUES(sharpe),
+        max_drawdown  = VALUES(max_drawdown),
+        beta          = VALUES(beta),
+        alpha         = VALUES(alpha);
+ 
+END$$
+
+-- ==================================================
+--                end modifided  
+-- ==================================================
+
+
+-- ==================================================
+--                  modifided  
+-- ==================================================
+
+DROP PROCEDURE IF EXISTS p_generar_snapshot $$
+
+CREATE PROCEDURE p_generar_snapshot(
+    IN p_id_portafolio INT
+)
+BEGIN
+
+    INSERT INTO snapshot_posicion
+    (
+        id_portafolio,
+        id_activo,
+        fecha_snapshot,
+        posicion_actual,
+        precio_cierre,
+        costo_base,
+        valor_mercado,
+        unrealized_pnl,
+        change_pct
+    )
+
+    SELECT
+
+        p.id_portafolio,
+
+        p.id_activo,
+
+        CURDATE(),
+
+        p.posicion_actual,
+
+        mm.precio,
+
+        p.costo_base,
+
+        p.posicion_actual * mm.precio,
+
+        (mm.precio-p.costo_base)*p.posicion_actual,
+
+        NULL
+
+    FROM posicion p
+
+    JOIN metricas_mercado mm
+
+        ON mm.id_activo=p.id_activo
+
+    WHERE p.id_portafolio=p_id_portafolio
+
+    AND mm.fecha=
+
+    (
+
+        SELECT MAX(fecha)
+
+        FROM metricas_mercado m2
+
+        WHERE m2.id_activo=p.id_activo
+
+    )
+
+    ON DUPLICATE KEY UPDATE
+
+        posicion_actual = VALUES(posicion_actual),
+
+        precio_cierre = VALUES(precio_cierre),
+
+        costo_base = VALUES(costo_base),
+
+        valor_mercado = VALUES(valor_mercado),
+
+        unrealized_pnl = VALUES(unrealized_pnl);
+
+END$$
+
+-- ==================================================
+--                end modifided  
+-- ==================================================
+
+-- ==================================================
+--               modifided  
+-- ==================================================
+
+CREATE PROCEDURE p_actualizar_posicion(
+    IN p_portafolio INT,
+    IN p_id_activo INT,
+    IN p_tipo ENUM('BUY','SELL'),
+    IN p_cantidad DECIMAL(18,8),
+    IN p_precio DECIMAL(18,6)
+)
+BEGIN
+
+    DECLARE v_shares DECIMAL(18,8);
+    DECLARE v_costo DECIMAL(18,6);
+
+    DECLARE v_valor DECIMAL(20,2);
+    DECLARE v_unrealized DECIMAL(20,2);
+
+    DECLARE v_precio_actual DECIMAL(18,6);
+
+    -- Buscar la posicion actual
+
+    SELECT
+        posicion_actual,
+        costo_base
+    INTO
+        v_shares,
+        v_costo
+    FROM posicion
+    WHERE id_portafolio = p_portafolio
+      AND id_activo = p_id_activo;
+
+    -- Si no existe
+
+    IF v_shares IS NULL THEN
+
+        SET v_shares = 0;
+        SET v_costo = 0;
+
+    END IF;
+
+    -- ==========================
+    -- BUY
+    -- ==========================
+
+    IF p_tipo='BUY' THEN
+
+        SET v_costo =
+        (
+            (v_shares*v_costo)+(p_cantidad*p_precio)
+        )/(v_shares+p_cantidad);
+
+        SET v_shares=v_shares+p_cantidad;
+
+    ELSE
+
+        -- ==========================
+        -- SELL
+        -- ==========================
+
+        SET v_shares=v_shares-p_cantidad;
+
+    END IF;
+
+    -- Obtener ultimo precio conocido
+
+    SELECT precio
+    INTO v_precio_actual
+    FROM metricas_mercado
+    WHERE id_activo=p_id_activo
+    ORDER BY fecha DESC
+    LIMIT 1;
+
+    IF v_precio_actual IS NULL THEN
+
+        SET v_precio_actual=p_precio;
+
+    END IF;
+
+    SET v_valor=v_shares*v_precio_actual;
+
+    SET v_unrealized=(v_precio_actual-v_costo)*v_shares;
+
+    -- ==========================
+    -- Si quedan acciones
+    -- ==========================
+
+    IF v_shares>0 THEN
+
+        INSERT INTO posicion
+        (
+            id_portafolio,
+            id_activo,
+            posicion_actual,
+            costo_base,
+            valor_mercado,
+            unrealized_pnl
+        )
+
+        VALUES
+        (
+            p_portafolio,
+            p_id_activo,
+            v_shares,
+            v_costo,
+            v_valor,
+            v_unrealized
+        )
+
+        ON DUPLICATE KEY UPDATE
+
+            posicion_actual=VALUES(posicion_actual),
+            costo_base=VALUES(costo_base),
+            valor_mercado=VALUES(valor_mercado),
+            unrealized_pnl=VALUES(unrealized_pnl);
+
+        INSERT IGNORE INTO activos_portafolio
+        (
+            id_activo,
+            id_portafolio
+        )
+
+        VALUES
+        (
+            p_id_activo,
+            p_portafolio
+        );
+
+    ELSE
+
+        DELETE FROM posicion
+        WHERE id_portafolio=p_portafolio
+        AND id_activo=p_id_activo;
+
+        DELETE FROM activos_portafolio
+        WHERE id_portafolio=p_portafolio
+        AND id_activo=p_id_activo;
+
+    END IF;
+
+END$$
+
+-- ==================================================
+--                end modifided
+-- ==================================================
+
+
+-- ==================================================
+--               modifided  
+-- ==================================================
+
 CREATE PROCEDURE p_realizar_transaccion(
     IN p_portfolio_id INT,
     IN p_ticker VARCHAR(20),
@@ -644,49 +945,49 @@ CREATE PROCEDURE p_realizar_transaccion(
     IN p_date DATETIME
 )
 BEGIN
-
+ 
     DECLARE v_cash DECIMAL(20,2);
     DECLARE v_id_activo INT;
-
+ 
     DECLARE v_posicion DECIMAL(18,8);
     DECLARE v_costo DECIMAL(18,6);
-
+ 
     START TRANSACTION;
-
+ 
     -- Buscar el activo
-
+ 
     SELECT id_activo
     INTO v_id_activo
     FROM activo
     WHERE ticker = CONVERT(p_ticker USING utf8mb4) COLLATE utf8mb4_0900_ai_ci
     LIMIT 1;
-
+ 
     IF v_id_activo IS NULL THEN
         SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT='Ticker no existe.';
     END IF;
-
+ 
     -- Obtener cash
-
+ 
     SELECT cash
     INTO v_cash
     FROM portafolio
     WHERE id_portafolio=p_portfolio_id
     FOR UPDATE;
-
+ 
     IF p_type='BUY' THEN
-
+ 
         IF v_cash < p_shares*p_price THEN
             SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT='Fondos insuficientes.';
         END IF;
-
+ 
         UPDATE portafolio
         SET cash=cash-(p_shares*p_price)
         WHERE id_portafolio=p_portfolio_id;
-
+ 
     ELSE
-
+ 
         SELECT posicion_actual,
                costo_base
         INTO v_posicion,
@@ -695,20 +996,20 @@ BEGIN
         WHERE id_portafolio=p_portfolio_id
         AND id_activo=v_id_activo
         FOR UPDATE;
-
+ 
         IF v_posicion IS NULL OR v_posicion<p_shares THEN
             SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT='Insufficient shares to perform SELL.';
         END IF;
-
+ 
         UPDATE portafolio
         SET cash=cash+(p_shares*p_price)
         WHERE id_portafolio=p_portfolio_id;
-
+ 
     END IF;
-
+ 
     -- Registrar movimiento
-
+ 
     INSERT INTO movimiento
     (
         id_portafolio,
@@ -727,93 +1028,166 @@ BEGIN
         p_price,
         p_date
     );
+ 
+    -- La actualizacion de "posicion" y "activos_portafolio" (BUY y SELL)
+    -- vive UNICAMENTE en p_actualizar_posicion. No se repite aqui.
+ 
+    CALL p_actualizar_metricas_portafolio(p_portfolio_id);
+    CALL p_generar_snapshot(p_portfolio_id);
+    CALL p_actualizar_posicion(
+        p_portfolio_id,
+        v_id_activo,
+        p_type,
+        p_shares,
+        p_price
+    );
+ 
+    COMMIT;
+ 
+END$$
 
-    -- BUY
+-- ==================================================
+--                end modifided  
+-- ==================================================
 
-    IF p_type='BUY' THEN
+-- ==================================================
+--               modifided  
+-- ==================================================
 
-        IF EXISTS(
-            SELECT 1
-            FROM posicion
-            WHERE id_portafolio=p_portfolio_id
-            AND id_activo=v_id_activo
-        ) THEN
+CREATE PROCEDURE p_ejecutar_operacion_bono(
+    IN p_id_portafolio INT,
+    IN p_ticker VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+    IN p_tipo ENUM('BUY', 'SELL'),
+    IN p_cantidad DECIMAL(18,8),
+    IN p_precio DECIMAL(18,6),
+    IN p_fee DECIMAL(18,6),
+    IN p_notas TEXT
+)
+proc_label: BEGIN
+    DECLARE v_id_activo INT;
+    DECLARE v_tipo_activo ENUM('EQUITY', 'BOND');
+    DECLARE v_cash_actual DECIMAL(20,2);
+    DECLARE v_posicion_actual DECIMAL(18,8);
+    DECLARE v_costo_total DECIMAL(20,2);
+    DECLARE v_ingreso_total DECIMAL(20,2);
 
-            UPDATE posicion
-            SET
+    -- Manejo de excepciones SQL
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
 
-            costo_base=
-            (
-                (costo_base*posicion_actual)
-                +(p_price*p_shares)
-            )
-            /(posicion_actual+p_shares),
+    START TRANSACTION;
 
-            posicion_actual=posicion_actual+p_shares
+    -- 1. Validar que el activo exista y verificar si es BOND
+    SELECT id_activo, tipo_activo 
+    INTO v_id_activo, v_tipo_activo
+    FROM activo
+    WHERE ticker = p_ticker COLLATE utf8mb4_unicode_ci
+    LIMIT 1;
 
-            WHERE id_portafolio=p_portfolio_id
-            AND id_activo=v_id_activo;
+    IF v_id_activo IS NULL THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Error: El ticker especificado no existe en el catálogo.';
+    END IF;
 
-        ELSE
+    IF v_tipo_activo <> 'BOND' THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Error: El procedimiento es exclusivo para instrumentos de tipo BOND.';
+    END IF;
 
-            INSERT INTO posicion
-            (
-                id_portafolio,
-                id_activo,
-                posicion_actual,
-                costo_base
-            )
-            VALUES
-            (
-                p_portfolio_id,
-                v_id_activo,
-                p_shares,
-                p_price
-            );
+    -- 2. Bloquear y consultar efectivo del portafolio
+    SELECT cash 
+    INTO v_cash_actual
+    FROM portafolio
+    WHERE id_portafolio = p_id_portafolio
+    FOR UPDATE;
 
+    IF v_cash_actual IS NULL THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Error: El portafolio especificado no existe.';
+    END IF;
+
+    -- 3. Lógica según el tipo de operación
+    IF p_tipo = 'BUY' THEN
+        SET v_costo_total = (p_cantidad * p_precio) + IFNULL(p_fee, 0.00);
+
+        -- Validar fondos suficientes
+        IF v_cash_actual < v_costo_total THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Error: Fondos insuficientes en efectivo para realizar la compra del bono.';
         END IF;
 
-        INSERT IGNORE INTO activos_portafolio
-        VALUES
-        (
-            v_id_activo,
-            p_portfolio_id
-        );
+        -- Descontar efectivo
+        UPDATE portafolio
+        SET cash = cash - v_costo_total
+        WHERE id_portafolio = p_id_portafolio;
 
-    END IF;
-
-    -- SELL
-
-    IF p_type='SELL' THEN
-
-        UPDATE posicion
-        SET posicion_actual=posicion_actual-p_shares
-        WHERE id_portafolio=p_portfolio_id
-        AND id_activo=v_id_activo;
-
-        DELETE
+    ELSEIF p_tipo = 'SELL' THEN
+        -- Consultar posición actual
+        SELECT posicion_actual 
+        INTO v_posicion_actual
         FROM posicion
-        WHERE id_portafolio=p_portfolio_id
-        AND id_activo=v_id_activo
-        AND posicion_actual<=0;
+        WHERE id_portafolio = p_id_portafolio 
+          AND id_activo = v_id_activo
+        FOR UPDATE;
 
-        DELETE
-        FROM activos_portafolio
-        WHERE id_portafolio=p_portfolio_id
-        AND id_activo=v_id_activo
-        AND NOT EXISTS
-        (
-            SELECT 1
-            FROM posicion
-            WHERE id_portafolio=p_portfolio_id
-            AND id_activo=v_id_activo
-        );
+        -- Validar títulos suficientes
+        IF v_posicion_actual IS NULL OR v_posicion_actual < p_cantidad THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Error: No posees suficientes títulos/bonos para realizar la venta.';
+        END IF;
 
+        SET v_ingreso_total = (p_cantidad * p_precio) - IFNULL(p_fee, 0.00);
+
+        -- Acreditar efectivo
+        UPDATE portafolio
+        SET cash = cash + v_ingreso_total
+        WHERE id_portafolio = p_id_portafolio;
     END IF;
+
+    -- 4. Registrar la transacción inmutable en MOVIMIENTO
+    INSERT INTO movimiento (
+        id_portafolio,
+        id_activo,
+        tipo_mov,
+        cantidad,
+        precio_por_accion,
+        fee,
+        notas,
+        fecha_transaccion
+    ) VALUES (
+        p_id_portafolio,
+        v_id_activo,
+        p_tipo,
+        p_cantidad,
+        p_precio,
+        IFNULL(p_fee, 0.00),
+        p_notas,
+        CURRENT_TIMESTAMP
+    );
+
+    -- 5. Actualizar la POSICION usando tu procedimiento existente
+    CALL p_actualizar_posicion(
+        p_id_portafolio,
+        v_id_activo,
+        p_tipo,
+        p_cantidad,
+        p_precio
+    );
+
+    -- 6. Recalcular las MÉTRICAS y SNAPSHOT del portafolio
+    CALL p_actualizar_metricas_portafolio(p_id_portafolio);
+    CALL p_generar_snapshot(p_id_portafolio);
 
     COMMIT;
+END $$
 
-END$$
+-- ==================================================
+--                end modifided
+-- ==================================================
+
 
 
 
